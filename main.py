@@ -8,28 +8,36 @@ import streamlit as st
 # 1. 페이지 기본 설정 및 제목
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="어제의 박스오피스", page_icon="🎬", layout="wide"
+    page_title="일별 박스오피스 조회", page_icon="🎬", layout="wide"
 )
 
-st.title("🎬 어제의 일별 박스오피스")
+st.title("🎬 일별 박스오피스 조회")
 
 # -----------------------------------------------------------------------------
-# 2. 한국 표준시(KST) 기준 어제 날짜 계산
+# 2. 날짜 선택기 (KST 기준 어제까지만 선택 가능)
 # -----------------------------------------------------------------------------
-# 배포 서버(Streamlit Cloud)의 시계가 UTC(세계협정시)로 되어 있어도
-# 항상 한국 표준시(Asia/Seoul) 기준으로 어제 날짜(YYYYMMDD)를 구합니다.
+# 한국 표준시(KST) 기준으로 오늘과 어제 날짜 계산
 kst_timezone = zoneinfo.ZoneInfo("Asia/Seoul")
-now_in_kst = datetime.now(kst_timezone)
-yesterday = now_in_kst - timedelta(days=1)
-target_dt = yesterday.strftime("%Y%m%d")
-display_date = yesterday.strftime("%Y년 %m월 %d일")
+now_in_kst = datetime.now(kst_timezone).date()
+max_allowed_date = now_in_kst - timedelta(days=1)
 
-st.caption(f"📅 기준일: **{display_date}** (한국 시간 기준 어제)")
+# 달력(st.date_input)으로 날짜 선택 (최대 선택 가능 날짜: 어제)
+selected_date = st.date_input(
+    label="📅 조회할 날짜를 선택하세요",
+    value=max_allowed_date,
+    max_value=max_allowed_date,
+    help="오늘 박스오피스는 아직 집계 전이므로 어제 날짜까지만 선택 가능합니다.",
+)
+
+# KOBIS API 형식(YYYYMMDD) 및 화면 표시용 문자열 변환
+target_dt = selected_date.strftime("%Y%m%d")
+display_date = selected_date.strftime("%Y년 %m월 %d일")
+
+st.caption(f"📌 선택한 날짜: **{display_date}**")
 
 # -----------------------------------------------------------------------------
 # 3. KOBIS API 인증키 설정
 # -----------------------------------------------------------------------------
-# 직접 발급받은 KOBIS API 키를 지정합니다.
 api_key = "1c5660416dea1b03251c2612dd008243"
 
 # -----------------------------------------------------------------------------
@@ -54,7 +62,7 @@ data = fetch_box_office_data(url, params)
 # -----------------------------------------------------------------------------
 # 5. 예외 및 오류 처리
 # -----------------------------------------------------------------------------
-# Network 오류 처리
+# 네트워크 오류 처리
 if "error_type" in data and data["error_type"] == "network":
     st.error("🌐 **네트워크 통신 오류**")
     st.info(
@@ -62,7 +70,7 @@ if "error_type" in data and data["error_type"] == "network":
     )
     st.stop()
 
-# API 인증 오류 처리 (KOBIS는 키가 틀려도 HTTP 200으로 faultInfo를 반환함)
+# API 인증 오류 처리
 if "faultInfo" in data:
     fault = data["faultInfo"]
     st.error("🔑 **KOBIS API 인증 오류 (faultInfo)**")
@@ -76,28 +84,23 @@ if "faultInfo" in data:
     )
     st.stop()
 
-# 응답 데이터 파싱 및 데이터 유무 확인
+# 영화 목록이 비어 있는 경우
 box_office_result = data.get("boxOfficeResult", {})
 daily_list = box_office_result.get("dailyBoxOfficeList", [])
 
 if not daily_list:
-    st.warning("⚠️ **박스오피스 데이터 없음**")
+    st.warning("⚠️ **그날은 아직 집계 전입니다.**")
     st.info(
-        f"""
-        **{display_date}**의 박스오피스 데이터가 비어 있습니다.
-        
-        - KOBIS 서버에서 아직 어제자 정산 데이터 작성을 완료하지 않았을 수 있습니다.
-        - 잠시 후 다시 시도하시거나 KOBIS 공식 홈페이지의 정시 업데이트 여부를 확인해 주세요.
-        """
+        f"**{display_date}**의 박스오피스 데이터가 존재하지 않거나 정산 중입니다. 다른 날짜를 선택해 주세요."
     )
     st.stop()
 
 # -----------------------------------------------------------------------------
-# 6. 데이터 전처리 (문자열 -> 숫자 변환)
+# 6. 데이터 전처리 (숫자 변환 및 기호/이모지 가공)
 # -----------------------------------------------------------------------------
 df = pd.DataFrame(daily_list)
 
-# KOBIS 응답값(문자열)을 숫자로 안전하게 변환
+# 숫자로 변환할 컬럼 지정
 numeric_columns = [
     "rank",
     "rankInten",
@@ -110,20 +113,45 @@ for col in numeric_columns:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
+
+# 1) 순위 증감 표시 가공 (양수: 🔺, 음수: 🔹, 0: -)
+def format_rank_inten(val):
+    val = int(val)
+    if val > 0:
+        return f"🔺 {val}"
+    elif val < 0:
+        return f"🔹 {abs(val)}"
+    else:
+        return "-"
+
+
+df["rankIntenDisplay"] = df["rankInten"].apply(format_rank_inten)
+
+
+# 2) 영화명 가공 (누적관객 100만 명 이상 시 🏆 트로피 이모지 부착)
+def format_movie_title(row):
+    title = str(row["movieNm"])
+    if row["audiAcc"] >= 1000000:
+        return f"🏆 {title}"
+    return title
+
+
+df["displayMovieNm"] = df.apply(format_movie_title, axis=1)
+
 # -----------------------------------------------------------------------------
 # 7. 화면 구성: 1위 영화 핵심 지표 (Metrics)
 # -----------------------------------------------------------------------------
 top_1 = df.iloc[0]
 
-st.subheader("🥇 어제의 1위 영화")
+st.subheader(f"🥇 {display_date} 1위 영화")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric(label="🎬 영화명", value=str(top_1["movieNm"]))
+    st.metric(label="🎬 영화명", value=str(top_1["displayMovieNm"]))
 
 with col2:
     st.metric(
-        label="🎟️ 어제 관객수",
+        label="🎟️ 당일 관객수",
         value=f"{int(top_1['audiCnt']):,} 명",
         delta=f"전날 대비 {int(top_1['rankInten']):+} 위"
         if top_1["rankInten"] != 0
@@ -142,12 +170,9 @@ st.divider()
 # -----------------------------------------------------------------------------
 st.subheader("📊 관객수 상위 TOP 5 영화")
 
-# 상위 5개 데이터 추출
 df_top5 = df.head(5).copy()
-
-# Streamlit 기본 차트(st.bar_chart)에 맞게 데이터프레임 구조 생성
 chart_data = pd.DataFrame(
-    {"영화명": df_top5["movieNm"], "어제 관객수": df_top5["audiCnt"]}
+    {"영화명": df_top5["movieNm"], "당일 관객수": df_top5["audiCnt"]}
 ).set_index("영화명")
 
 st.bar_chart(chart_data)
@@ -159,12 +184,21 @@ st.divider()
 # -----------------------------------------------------------------------------
 st.subheader("📋 전체 박스오피스 순위")
 
-# 표에 보여줄 컬럼 선택 및 이름 변경
+# 표 출력을 위한 데이터프레임 구성
 display_df = df[
-    ["rank", "movieNm", "openDt", "audiCnt", "audiAcc", "scrnCnt"]
+    [
+        "rank",
+        "rankIntenDisplay",
+        "displayMovieNm",
+        "openDt",
+        "audiCnt",
+        "audiAcc",
+        "scrnCnt",
+    ]
 ].copy()
 display_df.columns = [
     "순위",
+    "순위증감",
     "영화명",
     "개봉일",
     "관객수",
@@ -172,7 +206,6 @@ display_df.columns = [
     "스크린수",
 ]
 
-# 깔끔한 표 출력을 위해 정수형 컬럼 formatting 설정 후 출력
 st.dataframe(
     display_df,
     use_container_width=True,
