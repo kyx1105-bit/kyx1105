@@ -27,25 +27,10 @@ display_date = yesterday.strftime("%Y년 %m월 %d일")
 st.caption(f"📅 기준일: **{display_date}** (한국 시간 기준 어제)")
 
 # -----------------------------------------------------------------------------
-# 3. Streamlit Secrets에서 API 인증키 불러오기
+# 3. KOBIS API 인증키 설정
 # -----------------------------------------------------------------------------
-# .streamlit/secrets.toml 파일 또는 Streamlit Cloud의 Secrets 설정에서
-# KOBIS_KEY 값을 안전하게 읽어옵니다.
-if "KOBIS_KEY" not in st.secrets or not st.secrets["KOBIS_KEY"]:
-    st.error("🔒 **인증키 미설치 오류**")
-    st.warning(
-        """
-        KOBIS API 인증키가 설정되지 않았습니다.
-        
-        **확인 및 해결 방법:**
-        1. [KOBIS Open API](https://www.kobis.or.kr/kobisopenapi/) 사이트에서 회원가입 후 키를 발급받으세요.
-        2. 로컬 실행 시: `.streamlit/secrets.toml` 파일에 `KOBIS_KEY = "발급받은_키"`를 추가해 주세요.
-        3. Streamlit Cloud 배포 시: 앱 설정의 **Secrets** 항목에 `KOBIS_KEY = "발급받은_키"`를 등록해 주세요.
-        """
-    )
-    st.stop()
-
-api_key = st.secrets["KOBIS_KEY"]
+# 직접 발급받은 KOBIS API 키를 지정합니다.
+api_key = "1c5660416dea1b03251c2612dd008243"
 
 # -----------------------------------------------------------------------------
 # 4. KOBIS API 데이터 요청
@@ -139,15 +124,15 @@ with col1:
 with col2:
     st.metric(
         label="🎟️ 어제 관객수",
-        value=f"{top_1['audiCnt']:,} 명",
-        delta=f"전날 대비 {top_1['rankInten']:+} 위"
+        value=f"{int(top_1['audiCnt']):,} 명",
+        delta=f"전날 대비 {int(top_1['rankInten']):+} 위"
         if top_1["rankInten"] != 0
         else "순위 유지",
     )
 
 with col3:
     st.metric(
-        label="🍿 누적 관객수", value=f"{top_1['audiAcc']:,} 명"
+        label="🍿 누적 관객수", value=f"{int(top_1['audiAcc']):,} 명"
     )
 
 st.divider()
